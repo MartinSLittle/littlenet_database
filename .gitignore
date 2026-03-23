@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Bases de datos locales
+*.sqlite3
+*.db
+
+# Logs temporales
+logs/*
+!logs/.gitkeep
+
+# Workspace local de importaciones y archivos pesados
+workspace/*
+!workspace/.gitkeep
+
+# Build artefacts
+build/
+dist/
+
+# Entornos locales
+.venv/
+venv/
