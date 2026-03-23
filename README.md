@@ -123,6 +123,10 @@ Archivos de build incluidos:
 - `requirements-build-windows.txt`: dependencia minima para empaquetado.
 - `assets/windows/README.md`: convencion para un icono opcional.
 
+La salida del empaquetado se genera en la carpeta:
+
+- `ejecutable_windows`
+
 ### Recomendacion de build
 
 Se recomienda `onedir` para uso interno y pruebas porque:
@@ -149,6 +153,14 @@ build_windows.bat onedir
 
 Ese script instala automaticamente las dependencias de build si hacen falta y luego ejecuta PyInstaller.
 
+Tambien podes ejecutar simplemente:
+
+```bat
+build_windows.bat
+```
+
+Sin argumentos, el script usa `onedir` por defecto.
+
 4. O genera una build de archivo unico:
 
 ```bat
@@ -156,6 +168,8 @@ build_windows.bat onefile
 ```
 
 ### Que archivo `.exe` se genera
+
+Todos los archivos de salida quedan dentro de `ejecutable_windows`, para que sea mas claro para el usuario donde encontrar el programa compilado.
 
 Si usas `onedir`:
 
@@ -181,6 +195,8 @@ Cuando la aplicacion corre empaquetada como `.exe`, la ruta por defecto de la ba
 Si ese archivo no existe, la aplicacion lo crea automaticamente al guardar o consultar datos.
 
 Esto evita depender del directorio desde donde se abre el `.exe` y mantiene una ubicacion local predecible para cada usuario de Windows.
+
+Mover la carpeta `ejecutable_windows` o el `.exe` a otro lugar no cambia esa ruta por defecto, asi que la aplicacion sigue usando y actualizando la misma base mientras no selecciones manualmente otro archivo SQLite desde la GUI.
 
 Desde la propia GUI se puede cambiar la ruta de la base si queres trabajar con otro archivo SQLite.
 
