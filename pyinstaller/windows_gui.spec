@@ -4,7 +4,12 @@ from pathlib import Path
 import os
 
 
-project_root = Path(__file__).resolve().parents[1]
+spec_file = globals().get("__file__")
+if spec_file is None:
+    # PyInstaller puede ejecutar el .spec sin definir __file__.
+    spec_file = Path.cwd() / "pyinstaller" / "windows_gui.spec"
+
+project_root = Path(spec_file).resolve().parents[1]
 src_dir = project_root / "src" / "import_jobs"
 entry_script = src_dir / "gui_repairs.py"
 build_mode = os.environ.get("LITTLENET_BUILD_MODE", "onedir").strip().lower()
