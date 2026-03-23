@@ -2,6 +2,7 @@
 setlocal
 
 set BUILD_MODE=%~1
+set OUTPUT_DIR=ejecutable_windows
 if "%BUILD_MODE%"=="" set BUILD_MODE=onedir
 
 if /I not "%BUILD_MODE%"=="onedir" if /I not "%BUILD_MODE%"=="onefile" (
@@ -33,7 +34,7 @@ if errorlevel 1 (
 )
 
 set LITTLENET_BUILD_MODE=%BUILD_MODE%
-py -m PyInstaller --noconfirm --clean pyinstaller\windows_gui.spec
+py -m PyInstaller --noconfirm --clean --distpath "%OUTPUT_DIR%" pyinstaller\windows_gui.spec
 if errorlevel 1 (
     echo.
     echo La build fallo.
@@ -44,10 +45,10 @@ if errorlevel 1 (
 echo.
 if /I "%BUILD_MODE%"=="onedir" (
     echo Build completada.
-    echo Ejecutable: dist\LittlenetDatabaseGUI\LittlenetDatabaseGUI.exe
+    echo Ejecutable: %OUTPUT_DIR%\LittlenetDatabaseGUI\LittlenetDatabaseGUI.exe
 ) else (
     echo Build completada.
-    echo Ejecutable: dist\LittlenetDatabaseGUI.exe
+    echo Ejecutable: %OUTPUT_DIR%\LittlenetDatabaseGUI.exe
 )
 
 popd

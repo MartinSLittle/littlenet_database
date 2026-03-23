@@ -159,16 +159,16 @@ build_windows.bat onefile
 
 Si usas `onedir`:
 
-- ejecutable: `dist\LittlenetDatabaseGUI\LittlenetDatabaseGUI.exe`
+- ejecutable: `ejecutable_windows\LittlenetDatabaseGUI\LittlenetDatabaseGUI.exe`
 
 Si usas `onefile`:
 
-- ejecutable: `dist\LittlenetDatabaseGUI.exe`
+- ejecutable: `ejecutable_windows\LittlenetDatabaseGUI.exe`
 
 ### Como ejecutarlo
 
-- en `onedir`, hace doble clic sobre `dist\LittlenetDatabaseGUI\LittlenetDatabaseGUI.exe`
-- en `onefile`, hace doble clic sobre `dist\LittlenetDatabaseGUI.exe`
+- en `onedir`, hace doble clic sobre `ejecutable_windows\LittlenetDatabaseGUI\LittlenetDatabaseGUI.exe`
+- en `onefile`, hace doble clic sobre `ejecutable_windows\LittlenetDatabaseGUI.exe`
 
 La build esta configurada como aplicacion de ventana, asi que abre la GUI sin consola.
 
