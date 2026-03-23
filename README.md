@@ -119,8 +119,7 @@ Punto de entrada de la aplicacion:
 Archivos de build incluidos:
 
 - `pyinstaller/windows_gui.spec`: configuracion de PyInstaller para la GUI.
-- `build_windows.bat`: script de build para Windows.
-- `build_gui_windows.cmd`: variante pensada para doble clic en Windows.
+- `build_windows.bat`: script unico de build para Windows.
 - `requirements-build-windows.txt`: dependencia minima para empaquetado.
 - `assets/windows/README.md`: convencion para un icono opcional.
 
@@ -142,31 +141,19 @@ El `.exe` de Windows debe construirse en Windows para generar un ejecutable nati
 
 1. Abri `cmd` o PowerShell en la carpeta del proyecto.
 2. Crea o activa tu entorno virtual de Python si queres aislar dependencias.
-3. Instala PyInstaller:
-
-```bash
-py -m pip install -r requirements-build-windows.txt
-```
-
-4. Genera la build recomendada:
+3. Genera la build recomendada:
 
 ```bat
 build_windows.bat onedir
 ```
 
-5. O genera una build de archivo unico:
+Ese script instala automaticamente las dependencias de build si hacen falta y luego ejecuta PyInstaller.
+
+4. O genera una build de archivo unico:
 
 ```bat
 build_windows.bat onefile
 ```
-
-### Opcion simple con doble clic
-
-Si preferis no abrir consola manualmente, en Windows podes hacer doble clic sobre:
-
-- `build_gui_windows.cmd`
-
-Ese archivo instala la dependencia de build si hace falta y genera la variante recomendada `onedir`.
 
 ### Que archivo `.exe` se genera
 

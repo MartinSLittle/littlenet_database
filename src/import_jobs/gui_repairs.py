@@ -35,6 +35,7 @@ class RepairsApp:
         self.root = root
         self.root.title("Registro de reparaciones")
         self.root.geometry("1180x860")
+        self.root.minsize(980, 680)
 
         self.db_path_var = tk.StringVar(value=str(get_default_db_path()))
 
@@ -96,14 +97,38 @@ class RepairsApp:
         self._build_ui()
 
     def _build_ui(self) -> None:
-        main = ttk.Frame(self.root, padding=12)
-        main.pack(fill=tk.BOTH, expand=True)
+        container = ttk.Frame(self.root)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+
+        self.main_canvas = tk.Canvas(container, highlightthickness=0)
+        self.main_canvas.grid(row=0, column=0, sticky="nsew")
+
+        main_scrollbar = ttk.Scrollbar(
+            container,
+            orient="vertical",
+            command=self.main_canvas.yview,
+        )
+        main_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.main_canvas.configure(yscrollcommand=main_scrollbar.set)
+
+        main = ttk.Frame(self.main_canvas, padding=12)
         main.columnconfigure(0, weight=1)
         main.rowconfigure(1, weight=1)
+        self.main_window_id = self.main_canvas.create_window((0, 0), window=main, anchor="nw")
+
+        self.main_canvas.bind("<Configure>", self._on_main_canvas_configure)
+        main.bind("<Configure>", self._on_main_frame_configure)
 
         self._build_db_section(main)
 
-        notebook = ttk.Notebook(main)
+        self.notebook = ttk.Notebook(main)
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
+        self._bind_scroll_events(self.main_canvas)
+        self._bind_scroll_events(main)
+
+        notebook = self.notebook
         notebook.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
 
         create_tab = ttk.Frame(notebook, padding=12)
@@ -111,12 +136,16 @@ class RepairsApp:
         create_tab.rowconfigure(3, weight=1)
         notebook.add(create_tab, text="Nueva reparacion")
         self._build_create_tab(create_tab)
+        self._bind_scroll_events(create_tab)
 
         search_tab = ttk.Frame(notebook, padding=12)
         search_tab.columnconfigure(0, weight=1)
         search_tab.rowconfigure(1, weight=1)
         notebook.add(search_tab, text="Buscar y editar")
         self._build_search_tab(search_tab)
+        self._bind_scroll_events(search_tab)
+
+        self.root.after_idle(self._refresh_scroll_region)
 
     def _build_db_section(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Base de datos", padding=10)
@@ -378,6 +407,38 @@ class RepairsApp:
         ttk.Button(button_frame, text="Quitar pendiente", command=self.remove_pending_existing_file).grid(
             row=1, column=0, sticky="ew"
         )
+
+    def _on_main_canvas_configure(self, event: tk.Event[tk.Canvas]) -> None:
+        self.main_canvas.itemconfigure(self.main_window_id, width=event.width)
+        self._refresh_scroll_region()
+
+    def _on_main_frame_configure(self, _event: tk.Event[ttk.Frame]) -> None:
+        self._refresh_scroll_region()
+
+    def _on_notebook_tab_changed(self, _event: tk.Event[ttk.Notebook]) -> None:
+        self.root.after_idle(self._refresh_scroll_region)
+
+    def _refresh_scroll_region(self) -> None:
+        self.main_canvas.update_idletasks()
+        self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+
+    def _bind_scroll_events(self, widget: tk.Misc) -> None:
+        widget.bind("<MouseWheel>", self._on_mousewheel, add="+")
+        widget.bind("<Button-4>", self._on_mousewheel, add="+")
+        widget.bind("<Button-5>", self._on_mousewheel, add="+")
+
+    def _on_mousewheel(self, event: tk.Event[tk.Misc]) -> str | None:
+        if getattr(event, "delta", 0):
+            step = -1 if event.delta > 0 else 1
+        elif getattr(event, "num", None) == 4:
+            step = -1
+        elif getattr(event, "num", None) == 5:
+            step = 1
+        else:
+            return None
+
+        self.main_canvas.yview_scroll(step, "units")
+        return "break"
 
     def pick_db_path(self) -> None:
         selected = filedialog.asksaveasfilename(

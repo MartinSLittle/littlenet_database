@@ -13,19 +13,27 @@ set SCRIPT_DIR=%~dp0
 pushd "%SCRIPT_DIR%"
 
 echo.
+echo ============================================
+echo   Littlenet Database - Build GUI Windows
+echo ============================================
+echo.
 echo Building Windows executable in %BUILD_MODE% mode...
 echo.
 
-python -m PyInstaller --version >nul 2>&1
+py -m PyInstaller --version >nul 2>&1
 if errorlevel 1 (
-    echo PyInstaller no esta instalado en este entorno.
-    echo Instalar con: py -m pip install -r requirements-build-windows.txt
-    popd
-    exit /b 1
+    echo Instalando dependencias de build...
+    py -m pip install -r requirements-build-windows.txt
+    if errorlevel 1 (
+        echo.
+        echo No se pudieron instalar las dependencias de build.
+        popd
+        exit /b 1
+    )
 )
 
 set LITTLENET_BUILD_MODE=%BUILD_MODE%
-python -m PyInstaller --noconfirm --clean pyinstaller\windows_gui.spec
+py -m PyInstaller --noconfirm --clean pyinstaller\windows_gui.spec
 if errorlevel 1 (
     echo.
     echo La build fallo.
