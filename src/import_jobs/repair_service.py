@@ -10,11 +10,15 @@ from schema import (
     connect_sqlite,
     create_reparacion,
     get_reparacion_full,
+    get_tipo_equipo_id_by_name,
+    list_clientes,
     list_multimedia_for_reparacion,
+    list_tipos_equipo,
     search_reparaciones,
     update_client,
     update_equipo,
     update_reparacion,
+    validate_tipo_equipo_id,
     upsert_client,
     upsert_equipo,
     validate_repair_status,
@@ -26,6 +30,7 @@ class RepairFormData:
     cliente_nombre: str
     cliente_celular: str | None = None
     cliente_correo: str | None = None
+    equipo_tipo_id: int | None = None
     equipo_marca: str | None = None
     equipo_modelo_original: str | None = None
     equipo_modelo_estandarizado: str | None = None
@@ -62,6 +67,7 @@ class RepairSearchFilters:
 class RepairSearchResult:
     repair_id: int
     cliente_nombre: str
+    equipo_tipo_nombre: str | None
     equipo_marca: str | None
     equipo_modelo: str | None
     equipo_serie: str | None
@@ -69,6 +75,20 @@ class RepairSearchResult:
     fecha_egreso: str | None
     estado: int
     costo: float | None
+
+
+@dataclass
+class ClientListItem:
+    client_id: int
+    nombre: str
+    celular: str | None
+    correo: str | None
+
+
+@dataclass
+class EquipmentTypeListItem:
+    type_id: int
+    nombre: str
 
 
 @dataclass
@@ -87,6 +107,8 @@ class RepairDetail:
     cliente_nombre: str
     cliente_celular: str | None
     cliente_correo: str | None
+    equipo_tipo_id: int | None
+    equipo_tipo_nombre: str | None
     equipo_marca: str | None
     equipo_modelo_original: str | None
     equipo_modelo_estandarizado: str | None
@@ -108,6 +130,7 @@ class RepairUpdateData:
     cliente_nombre: str
     cliente_celular: str | None = None
     cliente_correo: str | None = None
+    equipo_tipo_id: int | None = None
     equipo_marca: str | None = None
     equipo_modelo_original: str | None = None
     equipo_modelo_estandarizado: str | None = None
@@ -184,6 +207,8 @@ def validate_repair_form(data: RepairFormData) -> RepairFormData:
 
     if data.costo is not None and data.costo < 0:
         raise ValueError("El costo no puede ser negativo.")
+    if data.equipo_tipo_id is None:
+        raise ValueError("El tipo de equipo es obligatorio.")
 
     archivos = [Path(path).expanduser() for path in (data.archivos or [])]
     for path in archivos:
@@ -194,6 +219,7 @@ def validate_repair_form(data: RepairFormData) -> RepairFormData:
         cliente_nombre=cliente_nombre,
         cliente_celular=clean_optional_text(data.cliente_celular),
         cliente_correo=clean_optional_text(data.cliente_correo),
+        equipo_tipo_id=data.equipo_tipo_id,
         equipo_marca=clean_optional_text(data.equipo_marca),
         equipo_modelo_original=clean_optional_text(data.equipo_modelo_original),
         equipo_modelo_estandarizado=clean_optional_text(data.equipo_modelo_estandarizado),
@@ -218,6 +244,8 @@ def validate_repair_update(data: RepairUpdateData) -> RepairUpdateData:
 
     if data.costo is not None and data.costo < 0:
         raise ValueError("El costo no puede ser negativo.")
+    if data.equipo_tipo_id is None:
+        raise ValueError("El tipo de equipo es obligatorio.")
 
     archivos = [Path(path).expanduser() for path in (data.archivos or [])]
     for path in archivos:
@@ -231,6 +259,7 @@ def validate_repair_update(data: RepairUpdateData) -> RepairUpdateData:
         cliente_nombre=cliente_nombre,
         cliente_celular=clean_optional_text(data.cliente_celular),
         cliente_correo=clean_optional_text(data.cliente_correo),
+        equipo_tipo_id=data.equipo_tipo_id,
         equipo_marca=clean_optional_text(data.equipo_marca),
         equipo_modelo_original=clean_optional_text(data.equipo_modelo_original),
         equipo_modelo_estandarizado=clean_optional_text(data.equipo_modelo_estandarizado),
@@ -249,6 +278,7 @@ def create_repair_record(db_path: str | Path, data: RepairFormData) -> RepairCre
     validated = validate_repair_form(data)
     connection = connect_sqlite(db_path)
     try:
+        validate_tipo_equipo_id(connection, validated.equipo_tipo_id)
         client_id, client_created = upsert_client(
             connection,
             validated.cliente_nombre,
@@ -258,6 +288,7 @@ def create_repair_record(db_path: str | Path, data: RepairFormData) -> RepairCre
         equipment_id, equipment_created = upsert_equipo(
             connection,
             id_cliente=client_id,
+            id_tipo_equipo=validated.equipo_tipo_id,
             marca=validated.equipo_marca,
             modelo_original=validated.equipo_modelo_original,
             modelo_estandarizado=validated.equipo_modelo_estandarizado,
@@ -293,6 +324,10 @@ def create_repair_record(db_path: str | Path, data: RepairFormData) -> RepairCre
             repair_id=repair_id,
             attached_files=attached_files,
         )
+    except sqlite3.IntegrityError as exc:
+        raise ValueError(
+            "No se pudo guardar la reparacion. Revisa que el tipo exista y que el numero de serie no este duplicado."
+        ) from exc
     finally:
         connection.close()
 
@@ -311,6 +346,7 @@ def search_repairs(db_path: str | Path, filters: RepairSearchFilters) -> list[Re
             RepairSearchResult(
                 repair_id=int(row["reparacion_id"]),
                 cliente_nombre=row["cliente_nombre"],
+                equipo_tipo_nombre=row["equipo_tipo"],
                 equipo_marca=row["equipo_marca"],
                 equipo_modelo=row["equipo_modelo"],
                 equipo_serie=row["equipo_serie"],
@@ -321,6 +357,44 @@ def search_repairs(db_path: str | Path, filters: RepairSearchFilters) -> list[Re
             )
             for row in rows
         ]
+    finally:
+        connection.close()
+
+
+def list_registered_clients(db_path: str | Path) -> list[ClientListItem]:
+    connection = connect_sqlite(db_path)
+    try:
+        return [
+            ClientListItem(
+                client_id=int(row["id"]),
+                nombre=row["nombre"],
+                celular=row["celular"],
+                correo=row["correo"],
+            )
+            for row in list_clientes(connection)
+        ]
+    finally:
+        connection.close()
+
+
+def list_equipment_types(db_path: str | Path) -> list[EquipmentTypeListItem]:
+    connection = connect_sqlite(db_path)
+    try:
+        return [
+            EquipmentTypeListItem(type_id=int(row["id"]), nombre=row["nombre"])
+            for row in list_tipos_equipo(connection)
+        ]
+    finally:
+        connection.close()
+
+
+def resolve_equipment_type_id(db_path: str | Path, nombre: str) -> int:
+    connection = connect_sqlite(db_path)
+    try:
+        type_id = get_tipo_equipo_id_by_name(connection, nombre)
+        if type_id is None:
+            raise ValueError(f"Tipo de equipo no encontrado: {nombre}")
+        return type_id
     finally:
         connection.close()
 
@@ -339,6 +413,8 @@ def load_repair_detail(db_path: str | Path, repair_id: int) -> RepairDetail:
             cliente_nombre=row["cliente_nombre"],
             cliente_celular=row["cliente_celular"],
             cliente_correo=row["cliente_correo"],
+            equipo_tipo_id=row["id_tipo_equipo"],
+            equipo_tipo_nombre=row["tipo_equipo_nombre"],
             equipo_marca=row["marca"],
             equipo_modelo_original=row["modelo_original"],
             equipo_modelo_estandarizado=row["modelo_estandarizado"],
@@ -367,6 +443,7 @@ def update_repair_record(db_path: str | Path, data: RepairUpdateData) -> RepairU
     validated = validate_repair_update(data)
     connection = connect_sqlite(db_path)
     try:
+        validate_tipo_equipo_id(connection, validated.equipo_tipo_id)
         update_client(
             connection,
             validated.client_id,
@@ -377,6 +454,7 @@ def update_repair_record(db_path: str | Path, data: RepairUpdateData) -> RepairU
         update_equipo(
             connection,
             validated.equipment_id,
+            validated.equipo_tipo_id,
             validated.equipo_marca,
             validated.equipo_modelo_original,
             validated.equipo_modelo_estandarizado,

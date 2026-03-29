@@ -19,6 +19,13 @@ REPAIR_STATUS_LABELS = {
     REPAIR_STATUS_DELIVERED: "entregado",
 }
 
+DEFAULT_EQUIPMENT_TYPES = (
+    "Notebook",
+    "Mini-PC",
+    "PC",
+    "Otro",
+)
+
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -30,14 +37,21 @@ CREATE TABLE IF NOT EXISTS clientes (
     correo TEXT
 );
 
+CREATE TABLE IF NOT EXISTS tipos_equipo (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL UNIQUE
+);
+
 CREATE TABLE IF NOT EXISTS equipos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     id_cliente INTEGER NOT NULL,
+    id_tipo_equipo INTEGER,
     marca TEXT,
     modelo_original TEXT,
     modelo_estandarizado TEXT,
     nro_serie TEXT UNIQUE,
-    FOREIGN KEY (id_cliente) REFERENCES clientes(id)
+    FOREIGN KEY (id_cliente) REFERENCES clientes(id),
+    FOREIGN KEY (id_tipo_equipo) REFERENCES tipos_equipo(id)
 );
 
 CREATE TABLE IF NOT EXISTS reparaciones (
@@ -71,6 +85,129 @@ def normalize_lookup(value: str | None) -> str:
     return " ".join((value or "").strip().lower().split())
 
 
+def create_equipos_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE equipos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_cliente INTEGER NOT NULL,
+            id_tipo_equipo INTEGER,
+            marca TEXT,
+            modelo_original TEXT,
+            modelo_estandarizado TEXT,
+            nro_serie TEXT UNIQUE,
+            FOREIGN KEY (id_cliente) REFERENCES clientes(id),
+            FOREIGN KEY (id_tipo_equipo) REFERENCES tipos_equipo(id)
+        )
+        """
+    )
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_equipos_cliente ON equipos(id_cliente)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_equipos_tipo ON equipos(id_tipo_equipo)")
+
+
+def seed_default_equipment_types(connection: sqlite3.Connection) -> None:
+    total = connection.execute("SELECT COUNT(*) FROM tipos_equipo").fetchone()[0]
+    if total:
+        return
+    connection.executemany(
+        "INSERT INTO tipos_equipo (nombre) VALUES (?)",
+        [(name,) for name in DEFAULT_EQUIPMENT_TYPES],
+    )
+
+
+def get_tipo_equipo_id_by_name(connection: sqlite3.Connection, nombre: str) -> int | None:
+    row = connection.execute(
+        "SELECT id FROM tipos_equipo WHERE LOWER(nombre) = LOWER(?)",
+        (nombre.strip(),),
+    ).fetchone()
+    if row is None:
+        return None
+    return int(row["id"])
+
+
+def get_default_tipo_equipo_id(connection: sqlite3.Connection) -> int:
+    default_id = get_tipo_equipo_id_by_name(connection, DEFAULT_EQUIPMENT_TYPES[0])
+    if default_id is None:
+        raise ValueError("No se encontro el tipo de equipo por defecto.")
+    return default_id
+
+
+def validate_tipo_equipo_id(connection: sqlite3.Connection, id_tipo_equipo: int) -> None:
+    row = connection.execute(
+        "SELECT 1 FROM tipos_equipo WHERE id = ?",
+        (id_tipo_equipo,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"Tipo de equipo inexistente: {id_tipo_equipo}")
+
+
+def list_tipos_equipo(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    return connection.execute(
+        """
+        SELECT id, nombre
+        FROM tipos_equipo
+        ORDER BY id
+        """
+    ).fetchall()
+
+
+def equipos_has_type_foreign_key(connection: sqlite3.Connection) -> bool:
+    foreign_keys = connection.execute("PRAGMA foreign_key_list(equipos)").fetchall()
+    return any(
+        row["table"] == "tipos_equipo" and row["from"] == "id_tipo_equipo"
+        for row in foreign_keys
+    )
+
+
+def migrate_equipos_table(connection: sqlite3.Connection, default_type_id: int, has_type_column: bool) -> None:
+    connection.execute("ALTER TABLE equipos RENAME TO equipos_legacy")
+    create_equipos_table(connection)
+    source_type_column = "id_tipo_equipo" if has_type_column else str(default_type_id)
+    connection.execute(
+        f"""
+        INSERT INTO equipos (
+            id, id_cliente, id_tipo_equipo, marca, modelo_original, modelo_estandarizado, nro_serie
+        )
+        SELECT
+            id,
+            id_cliente,
+            COALESCE({source_type_column}, {default_type_id}),
+            marca,
+            modelo_original,
+            modelo_estandarizado,
+            nro_serie
+        FROM equipos_legacy
+        """
+    )
+    connection.execute("DROP TABLE equipos_legacy")
+
+
+def ensure_equipment_type_schema(connection: sqlite3.Connection) -> None:
+    equipment_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(equipos)").fetchall()
+    }
+    default_type_id = get_default_tipo_equipo_id(connection)
+    has_type_column = "id_tipo_equipo" in equipment_columns
+
+    if not has_type_column or not equipos_has_type_foreign_key(connection):
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            migrate_equipos_table(connection, default_type_id, has_type_column)
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+
+    connection.execute(
+        """
+        UPDATE equipos
+        SET id_tipo_equipo = ?
+        WHERE id_tipo_equipo IS NULL
+        """,
+        (default_type_id,),
+    )
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_equipos_cliente ON equipos(id_cliente)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_equipos_tipo ON equipos(id_tipo_equipo)")
+
+
 def ensure_schema(connection: sqlite3.Connection) -> None:
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(SCHEMA_SQL)
@@ -89,6 +226,8 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
             WHERE contacto IS NOT NULL AND TRIM(contacto) != ''
             """
         )
+    seed_default_equipment_types(connection)
+    ensure_equipment_type_schema(connection)
     connection.commit()
 
 
@@ -142,11 +281,13 @@ def upsert_client(
 def upsert_equipo(
     connection: sqlite3.Connection,
     id_cliente: int,
+    id_tipo_equipo: int,
     marca: str | None = None,
     modelo_original: str | None = None,
     modelo_estandarizado: str | None = None,
     nro_serie: str | None = None,
 ) -> tuple[int, bool]:
+    validate_tipo_equipo_id(connection, id_tipo_equipo)
     clean_brand = marca.strip() if marca else None
     clean_original = modelo_original.strip() if modelo_original else None
     clean_standard = modelo_estandarizado.strip() if modelo_estandarizado else None
@@ -162,12 +303,13 @@ def upsert_equipo(
                 """
                 UPDATE equipos
                 SET id_cliente = ?,
+                    id_tipo_equipo = ?,
                     marca = COALESCE(marca, ?),
                     modelo_original = COALESCE(modelo_original, ?),
                     modelo_estandarizado = COALESCE(modelo_estandarizado, ?)
                 WHERE id = ?
                 """,
-                (id_cliente, clean_brand, clean_original, clean_standard, row["id"]),
+                (id_cliente, id_tipo_equipo, clean_brand, clean_original, clean_standard, row["id"]),
             )
             connection.commit()
             return int(row["id"]), False
@@ -194,23 +336,24 @@ def upsert_equipo(
             connection.execute(
                 """
                 UPDATE equipos
-                SET marca = COALESCE(marca, ?),
+                SET id_tipo_equipo = ?,
+                    marca = COALESCE(marca, ?),
                     modelo_original = COALESCE(modelo_original, ?),
                     modelo_estandarizado = COALESCE(modelo_estandarizado, ?),
                     nro_serie = COALESCE(nro_serie, ?)
                 WHERE id = ?
                 """,
-                (clean_brand, clean_original, clean_standard, clean_serial, row["id"]),
+                (id_tipo_equipo, clean_brand, clean_original, clean_standard, clean_serial, row["id"]),
             )
             connection.commit()
             return int(row["id"]), False
 
     cursor = connection.execute(
         """
-        INSERT INTO equipos (id_cliente, marca, modelo_original, modelo_estandarizado, nro_serie)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO equipos (id_cliente, id_tipo_equipo, marca, modelo_original, modelo_estandarizado, nro_serie)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (id_cliente, clean_brand, clean_original, clean_standard, clean_serial),
+        (id_cliente, id_tipo_equipo, clean_brand, clean_original, clean_standard, clean_serial),
     )
     connection.commit()
     return int(cursor.lastrowid), True
@@ -258,21 +401,33 @@ def update_client(
     connection.commit()
 
 
+def list_clientes(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    return connection.execute(
+        """
+        SELECT id, nombre, celular, correo
+        FROM clientes
+        ORDER BY LOWER(nombre), id
+        """
+    ).fetchall()
+
+
 def update_equipo(
     connection: sqlite3.Connection,
     id_equipo: int,
+    id_tipo_equipo: int,
     marca: str | None = None,
     modelo_original: str | None = None,
     modelo_estandarizado: str | None = None,
     nro_serie: str | None = None,
 ) -> None:
+    validate_tipo_equipo_id(connection, id_tipo_equipo)
     connection.execute(
         """
         UPDATE equipos
-        SET marca = ?, modelo_original = ?, modelo_estandarizado = ?, nro_serie = ?
+        SET id_tipo_equipo = ?, marca = ?, modelo_original = ?, modelo_estandarizado = ?, nro_serie = ?
         WHERE id = ?
         """,
-        (marca, modelo_original, modelo_estandarizado, nro_serie, id_equipo),
+        (id_tipo_equipo, marca, modelo_original, modelo_estandarizado, nro_serie, id_equipo),
     )
     connection.commit()
 
@@ -312,6 +467,7 @@ def search_reparaciones(
     field_map = {
         "id_reparacion": "CAST(r.id AS TEXT)",
         "cliente_nombre": "c.nombre",
+        "tipo_equipo": "te.nombre",
         "nro_serie": "e.nro_serie",
         "marca": "e.marca",
         "modelo": "COALESCE(e.modelo_estandarizado, e.modelo_original)",
@@ -351,11 +507,13 @@ def search_reparaciones(
             r.estado,
             r.costo,
             c.nombre AS cliente_nombre,
+            te.nombre AS equipo_tipo,
             e.marca AS equipo_marca,
             COALESCE(e.modelo_estandarizado, e.modelo_original) AS equipo_modelo,
             e.nro_serie AS equipo_serie
         FROM reparaciones r
         JOIN equipos e ON e.id = r.id_equipo
+        LEFT JOIN tipos_equipo te ON te.id = e.id_tipo_equipo
         JOIN clientes c ON c.id = e.id_cliente
         {where_sql}
         ORDER BY r.id DESC
@@ -376,6 +534,8 @@ def get_reparacion_full(connection: sqlite3.Connection, id_reparacion: int) -> s
             r.estado,
             r.costo,
             e.id AS equipo_id,
+            e.id_tipo_equipo,
+            te.nombre AS tipo_equipo_nombre,
             e.marca,
             e.modelo_original,
             e.modelo_estandarizado,
@@ -386,6 +546,7 @@ def get_reparacion_full(connection: sqlite3.Connection, id_reparacion: int) -> s
             c.correo AS cliente_correo
         FROM reparaciones r
         JOIN equipos e ON e.id = r.id_equipo
+        LEFT JOIN tipos_equipo te ON te.id = e.id_tipo_equipo
         JOIN clientes c ON c.id = e.id_cliente
         WHERE r.id = ?
         """,

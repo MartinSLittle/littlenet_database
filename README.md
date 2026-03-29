@@ -6,9 +6,10 @@ El sistema esta centrado en la reparacion como entidad principal. Los archivos a
 
 ## Modelo de datos
 
-La base usa cuatro tablas principales:
+La base usa cinco tablas principales:
 
 - `clientes`: persona o entidad atendida.
+- `tipos_equipo`: catalogo maestro relacional con las clases permitidas de equipo.
 - `equipos`: equipo asociado a un cliente.
 - `reparaciones`: historial tecnico de cada equipo. Esta es la entidad principal del sistema.
 - `multimedia`: rutas de archivos asociados a una reparacion.
@@ -16,8 +17,20 @@ La base usa cuatro tablas principales:
 Relaciones:
 
 - un cliente puede tener varios equipos;
+- un tipo de equipo puede clasificar muchos equipos;
 - un equipo puede tener varias reparaciones;
 - una reparacion puede tener varios archivos multimedia.
+
+Valores iniciales de `tipos_equipo`:
+
+- `Notebook`
+- `Mini-PC`
+- `PC`
+- `Otro`
+
+La aplicacion inserta estos valores automaticamente al crear o migrar la base si la tabla esta vacia.
+
+Si la base ya existia antes de esta clasificacion, la migracion agrega `id_tipo_equipo` a `equipos` sin perder datos y asigna `Notebook` a los registros previos que no tengan tipo.
 
 Estados numericos de `reparaciones.estado`:
 
@@ -51,6 +64,7 @@ La informacion se guarda en un unico archivo SQLite, por ejemplo:
 Ese archivo contiene los datos estructurados del sistema:
 
 - clientes
+- tipos de equipo
 - equipos
 - reparaciones
 - rutas de multimedia asociada
@@ -85,7 +99,9 @@ python3 src/import_jobs/gui_repairs.py
 La GUI permite:
 
 - elegir la base SQLite o usar `littlenet_database.sqlite3`;
+- recordar automaticamente la ultima ruta SQLite seleccionada;
 - completar cliente, equipo y reparacion;
+- elegir `Tipo de equipo` desde el catalogo maestro `tipos_equipo`;
 - dejar `fecha_egreso` vacia cuando la reparacion sigue abierta;
 - seleccionar multiples archivos multimedia;
 - guardar usando la misma logica de negocio que el CLI;
@@ -196,6 +212,21 @@ Mover la carpeta `ejecutable_windows` o el `.exe` a otro lugar no cambia esa rut
 
 Desde la propia GUI se puede cambiar la ruta de la base si queres trabajar con otro archivo SQLite.
 
+### Configuracion local de la GUI
+
+La GUI guarda la ultima ruta seleccionada para la base en un archivo JSON local, fuera de SQLite.
+
+Ubicacion habitual:
+
+- en Windows: `%LOCALAPPDATA%\Littlenet Database\gui_config.json`
+- en Linux: `~/.local/share/Littlenet Database/gui_config.json`
+
+Comportamiento:
+
+- si no existe configuracion previa, la GUI usa `littlenet_database.sqlite3`;
+- si eliges otra base desde la interfaz o cambias la ruta en el campo, esa ultima ruta se guarda automaticamente;
+- si la ruta guardada ya no existe, la GUI vuelve a la ruta por defecto y muestra un aviso breve.
+
 ### Icono opcional
 
 Si queres personalizar el icono del `.exe`, coloca este archivo antes de compilar:
@@ -221,6 +252,7 @@ python3 src/import_jobs/manage_repairs.py \
   --cliente-nombre "Juan Perez" \
   --cliente-celular "11-5555-1234" \
   --cliente-correo "juan.perez@email.com" \
+  --tipo-equipo "Notebook" \
   --equipo-marca "Lenovo" \
   --equipo-modelo-original "Legion 5 15I" \
   --equipo-modelo-estandarizado "LEGION 5 15I" \
@@ -234,6 +266,8 @@ python3 src/import_jobs/manage_repairs.py \
 ```
 
 Tambien se puede seguir usando `src/import_jobs/reprocess_pdfs.py` como alias del cargador manual, aunque el flujo recomendado hoy es `manage_repairs.py` o la GUI.
+
+El parametro `--tipo-equipo` recibe el nombre visible del catalogo y la aplicacion resuelve internamente el `id_tipo_equipo` correspondiente.
 
 ## Validacion
 

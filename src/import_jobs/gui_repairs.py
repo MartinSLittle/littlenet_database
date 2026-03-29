@@ -17,12 +17,16 @@ except ModuleNotFoundError as exc:
     )
     raise SystemExit(1) from exc
 
-from app_runtime import get_default_db_path
+from app_runtime import load_last_db_path, save_last_db_path
 from repair_service import (
+    ClientListItem,
+    EquipmentTypeListItem,
     RepairFormData,
     RepairSearchFilters,
     RepairUpdateData,
     create_repair_record,
+    list_equipment_types,
+    list_registered_clients,
     load_repair_detail,
     search_repairs,
     update_repair_record,
@@ -37,11 +41,16 @@ class RepairsApp:
         self.root.geometry("1180x860")
         self.root.minsize(980, 680)
 
-        self.db_path_var = tk.StringVar(value=str(get_default_db_path()))
+        initial_db_path, startup_warning = load_last_db_path()
+        self.db_path_var = tk.StringVar(value=str(initial_db_path))
+        self._db_path_trace_id: str | None = None
+        self.startup_warning_message = startup_warning
 
+        self.selected_client_var = tk.StringVar()
         self.cliente_nombre_var = tk.StringVar()
         self.cliente_celular_var = tk.StringVar()
         self.cliente_correo_var = tk.StringVar()
+        self.equipo_tipo_var = tk.StringVar()
         self.equipo_marca_var = tk.StringVar()
         self.equipo_modelo_original_var = tk.StringVar()
         self.equipo_serie_var = tk.StringVar()
@@ -57,6 +66,7 @@ class RepairsApp:
         self.search_field_map = {
             "ID reparacion": "id_reparacion",
             "Nombre cliente": "cliente_nombre",
+            "Tipo de equipo": "tipo_equipo",
             "Numero de serie": "nro_serie",
             "Marca": "marca",
             "Modelo": "modelo",
@@ -73,6 +83,7 @@ class RepairsApp:
         self.edit_cliente_nombre_var = tk.StringVar()
         self.edit_cliente_celular_var = tk.StringVar()
         self.edit_cliente_correo_var = tk.StringVar()
+        self.edit_equipo_tipo_var = tk.StringVar()
         self.edit_equipo_marca_var = tk.StringVar()
         self.edit_equipo_modelo_original_var = tk.StringVar()
         self.edit_equipo_serie_var = tk.StringVar()
@@ -83,6 +94,9 @@ class RepairsApp:
         self.edit_message_var = tk.StringVar(value="Selecciona una reparacion para editarla.")
         self.edit_multimedia_existing: list[str] = []
         self.edit_multimedia_new_paths: list[Path] = []
+        self._scroll_events_bound = False
+        self.registered_client_map: dict[str, ClientListItem] = {}
+        self.equipment_type_map: dict[str, EquipmentTypeListItem] = {}
 
         self.state_options = {
             f"{label} ({code})": code for code, label in REPAIR_STATUS_LABELS.items()
@@ -94,7 +108,11 @@ class RepairsApp:
         self.status_var.set(first_state)
         self.edit_status_var.set(first_state)
 
+        self._db_path_trace_id = self.db_path_var.trace_add("write", self._on_db_path_changed)
         self._build_ui()
+
+        if self.startup_warning_message:
+            self.message_var.set(self.startup_warning_message)
 
     def _build_ui(self) -> None:
         container = ttk.Frame(self.root)
@@ -145,6 +163,7 @@ class RepairsApp:
         self._build_search_tab(search_tab)
         self._bind_scroll_events(search_tab)
 
+        self.refresh_db_dependent_data()
         self.root.after_idle(self._refresh_scroll_region)
 
     def _build_db_section(self, parent: ttk.Frame) -> None:
@@ -155,6 +174,9 @@ class RepairsApp:
         ttk.Label(frame, text="Archivo SQLite").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
         ttk.Entry(frame, textvariable=self.db_path_var).grid(row=0, column=1, sticky="ew", pady=4)
         ttk.Button(frame, text="Elegir...", command=self.pick_db_path).grid(row=0, column=2, sticky="ew", padx=(8, 0), pady=4)
+        ttk.Button(frame, text="Actualizar datos", command=self.refresh_db_dependent_data).grid(
+            row=0, column=3, sticky="ew", padx=(8, 0), pady=4
+        )
 
     def _build_create_tab(self, parent: ttk.Frame) -> None:
         self._build_client_section(parent)
@@ -175,25 +197,46 @@ class RepairsApp:
         frame = ttk.LabelFrame(parent, text="Cliente", padding=10)
         frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(2, weight=0)
+        frame.columnconfigure(3, weight=0)
 
-        ttk.Label(frame, text="Nombre").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(frame, textvariable=self.cliente_nombre_var).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(frame, text="Celular").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(frame, textvariable=self.cliente_celular_var).grid(row=1, column=1, sticky="ew", pady=4)
-        ttk.Label(frame, text="Correo").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(frame, textvariable=self.cliente_correo_var).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Label(frame, text="Cliente guardado").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.client_selector = ttk.Combobox(frame, textvariable=self.selected_client_var, state="readonly")
+        self.client_selector.grid(row=0, column=1, sticky="ew", pady=4)
+        self.client_selector.bind("<<ComboboxSelected>>", self.on_registered_client_selected)
+        ttk.Button(frame, text="Cargar", command=self.load_selected_client).grid(
+            row=0, column=2, sticky="ew", padx=(8, 0), pady=4
+        )
+        ttk.Button(frame, text="Manual", command=self.use_manual_client_entry).grid(
+            row=0, column=3, sticky="ew", padx=(8, 0), pady=4
+        )
+        ttk.Label(
+            frame,
+            text="Selecciona un cliente existente o deja el selector vacio para cargar uno nuevo manualmente.",
+        ).grid(row=1, column=1, columnspan=3, sticky="w", pady=(0, 4))
+
+        ttk.Label(frame, text="Nombre").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(frame, textvariable=self.cliente_nombre_var).grid(row=2, column=1, columnspan=3, sticky="ew", pady=4)
+        ttk.Label(frame, text="Celular").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(frame, textvariable=self.cliente_celular_var).grid(row=3, column=1, columnspan=3, sticky="ew", pady=4)
+        ttk.Label(frame, text="Correo").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(frame, textvariable=self.cliente_correo_var).grid(row=4, column=1, columnspan=3, sticky="ew", pady=4)
 
     def _build_equipment_section(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Equipo", padding=10)
         frame.grid(row=1, column=0, sticky="ew", pady=8)
         frame.columnconfigure(1, weight=1)
 
+        ttk.Label(frame, text="Tipo de equipo").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.equipment_type_selector = ttk.Combobox(frame, textvariable=self.equipo_tipo_var, state="readonly")
+        self.equipment_type_selector.grid(row=0, column=1, sticky="ew", pady=4)
+
         fields = [
             ("Marca", self.equipo_marca_var),
             ("Modelo", self.equipo_modelo_original_var),
             ("Nro serie", self.equipo_serie_var),
         ]
-        for row_index, (label, variable) in enumerate(fields):
+        for row_index, (label, variable) in enumerate(fields, start=1):
             ttk.Label(frame, text=label).grid(row=row_index, column=0, sticky="w", padx=(0, 8), pady=4)
             ttk.Entry(frame, textvariable=variable).grid(row=row_index, column=1, sticky="ew", pady=4)
 
@@ -284,11 +327,12 @@ class RepairsApp:
         results_frame.rowconfigure(0, weight=1)
         content.add(results_frame, weight=3)
 
-        columns = ("id", "cliente", "marca", "modelo", "serie", "estado", "ingreso", "egreso")
+        columns = ("id", "cliente", "tipo", "marca", "modelo", "serie", "estado", "ingreso", "egreso")
         self.results_tree = ttk.Treeview(results_frame, columns=columns, show="headings", height=16)
         headings = {
             "id": "ID",
             "cliente": "Cliente",
+            "tipo": "Tipo",
             "marca": "Marca",
             "modelo": "Modelo",
             "serie": "Serie",
@@ -299,6 +343,7 @@ class RepairsApp:
         widths = {
             "id": 70,
             "cliente": 170,
+            "tipo": 120,
             "marca": 110,
             "modelo": 180,
             "serie": 120,
@@ -351,12 +396,19 @@ class RepairsApp:
         frame.grid(row=1, column=0, sticky="ew", pady=8)
         frame.columnconfigure(1, weight=1)
 
-        ttk.Label(frame, text="Marca").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(frame, textvariable=self.edit_equipo_marca_var).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(frame, text="Modelo").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(frame, textvariable=self.edit_equipo_modelo_original_var).grid(row=1, column=1, sticky="ew", pady=4)
-        ttk.Label(frame, text="Nro serie").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(frame, textvariable=self.edit_equipo_serie_var).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Label(frame, text="Tipo de equipo").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.edit_equipment_type_selector = ttk.Combobox(
+            frame,
+            textvariable=self.edit_equipo_tipo_var,
+            state="readonly",
+        )
+        self.edit_equipment_type_selector.grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Label(frame, text="Marca").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(frame, textvariable=self.edit_equipo_marca_var).grid(row=1, column=1, sticky="ew", pady=4)
+        ttk.Label(frame, text="Modelo").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(frame, textvariable=self.edit_equipo_modelo_original_var).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Label(frame, text="Nro serie").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(frame, textvariable=self.edit_equipo_serie_var).grid(row=3, column=1, sticky="ew", pady=4)
 
     def _build_edit_repair_section(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Reparacion", padding=10)
@@ -423,13 +475,21 @@ class RepairsApp:
         self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
 
     def _bind_scroll_events(self, widget: tk.Misc) -> None:
-        widget.bind("<MouseWheel>", self._on_mousewheel, add="+")
-        widget.bind("<Button-4>", self._on_mousewheel, add="+")
-        widget.bind("<Button-5>", self._on_mousewheel, add="+")
+        if self._scroll_events_bound:
+            return
+        widget.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
+        widget.bind_all("<Button-4>", self._on_mousewheel, add="+")
+        widget.bind_all("<Button-5>", self._on_mousewheel, add="+")
+        self._scroll_events_bound = True
 
     def _on_mousewheel(self, event: tk.Event[tk.Misc]) -> str | None:
-        if getattr(event, "delta", 0):
-            step = -1 if event.delta > 0 else 1
+        target = self._get_scroll_target(event)
+        if target is None:
+            return None
+
+        delta = getattr(event, "delta", 0)
+        if delta:
+            step = -1 if delta > 0 else 1
         elif getattr(event, "num", None) == 4:
             step = -1
         elif getattr(event, "num", None) == 5:
@@ -437,8 +497,22 @@ class RepairsApp:
         else:
             return None
 
-        self.main_canvas.yview_scroll(step, "units")
+        target.yview_scroll(step, "units")
         return "break"
+
+    def _get_scroll_target(self, event: tk.Event[tk.Misc]) -> tk.Misc | None:
+        pointer_widget = self.root.winfo_containing(event.x_root, event.y_root)
+        widget = pointer_widget or event.widget
+
+        while widget is not None:
+            if getattr(widget, "yview", None) is not None:
+                return widget
+            parent_name = widget.winfo_parent()
+            if not parent_name:
+                break
+            widget = widget.nametowidget(parent_name)
+
+        return self.main_canvas
 
     def pick_db_path(self) -> None:
         selected = filedialog.asksaveasfilename(
@@ -450,6 +524,101 @@ class RepairsApp:
         )
         if selected:
             self.db_path_var.set(selected)
+            self.refresh_db_dependent_data()
+
+    def _on_db_path_changed(self, *_args: object) -> None:
+        raw_path = self.db_path_var.get().strip()
+        if not raw_path:
+            return
+        try:
+            save_last_db_path(raw_path)
+        except OSError:
+            return
+
+    def refresh_db_dependent_data(self) -> None:
+        self.refresh_registered_clients()
+        self.refresh_equipment_types()
+
+    def refresh_registered_clients(self) -> None:
+        try:
+            clients = list_registered_clients(
+                self.db_path_var.get().strip() or "littlenet_database.sqlite3"
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.registered_client_map = {}
+            self.client_selector.configure(values=[])
+            self.selected_client_var.set("")
+            self.message_var.set(f"No se pudieron cargar clientes guardados: {exc}")
+            return
+
+        self.registered_client_map = {
+            self.format_registered_client_label(client): client for client in clients
+        }
+        self.client_selector.configure(values=list(self.registered_client_map))
+        if self.selected_client_var.get() not in self.registered_client_map:
+            self.selected_client_var.set("")
+
+    def refresh_equipment_types(self) -> None:
+        try:
+            types = list_equipment_types(
+                self.db_path_var.get().strip() or "littlenet_database.sqlite3"
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.equipment_type_map = {}
+            self.equipment_type_selector.configure(values=[])
+            self.edit_equipment_type_selector.configure(values=[])
+            self.equipo_tipo_var.set("")
+            self.edit_equipo_tipo_var.set("")
+            self.message_var.set(f"No se pudieron cargar tipos de equipo: {exc}")
+            return
+
+        self.equipment_type_map = {item.nombre: item for item in types}
+        type_names = list(self.equipment_type_map)
+        self.equipment_type_selector.configure(values=type_names)
+        self.edit_equipment_type_selector.configure(values=type_names)
+        if self.equipo_tipo_var.get() not in self.equipment_type_map:
+            self.equipo_tipo_var.set(type_names[0] if type_names else "")
+        if self.edit_equipo_tipo_var.get() not in self.equipment_type_map:
+            self.edit_equipo_tipo_var.set("")
+
+    def selected_equipment_type_id(self, raw_value: str) -> int:
+        item = self.equipment_type_map.get(raw_value)
+        if item is None:
+            raise ValueError("Debes seleccionar un tipo de equipo valido.")
+        return item.type_id
+
+    def format_registered_client_label(self, client: ClientListItem) -> str:
+        parts = [f"#{client.client_id}", client.nombre]
+        if client.celular:
+            parts.append(client.celular)
+        if client.correo:
+            parts.append(client.correo)
+        return " | ".join(parts)
+
+    def on_registered_client_selected(self, _event: object) -> None:
+        self.load_selected_client()
+
+    def load_selected_client(self) -> None:
+        selected = self.selected_client_var.get()
+        if not selected:
+            return
+
+        client = self.registered_client_map.get(selected)
+        if client is None:
+            self.message_var.set("El cliente seleccionado ya no esta disponible. Actualiza la lista.")
+            return
+
+        self.cliente_nombre_var.set(client.nombre)
+        self.cliente_celular_var.set(client.celular or "")
+        self.cliente_correo_var.set(client.correo or "")
+        self.message_var.set(f"Cliente cargado desde la base: {client.nombre}.")
+
+    def use_manual_client_entry(self) -> None:
+        self.selected_client_var.set("")
+        self.cliente_nombre_var.set("")
+        self.cliente_celular_var.set("")
+        self.cliente_correo_var.set("")
+        self.message_var.set("Ingreso manual habilitado para un cliente nuevo.")
 
     def add_files(self) -> None:
         selected = filedialog.askopenfilenames(
@@ -517,6 +686,7 @@ class RepairsApp:
                     cliente_nombre=self.cliente_nombre_var.get(),
                     cliente_celular=self.cliente_celular_var.get(),
                     cliente_correo=self.cliente_correo_var.get(),
+                    equipo_tipo_id=self.selected_equipment_type_id(self.equipo_tipo_var.get()),
                     equipo_marca=self.equipo_marca_var.get(),
                     equipo_modelo_original=self.equipo_modelo_original_var.get(),
                     equipo_serie=self.equipo_serie_var.get(),
@@ -544,6 +714,7 @@ class RepairsApp:
         )
         self.message_var.set(success_message)
         messagebox.showinfo("Registro completado", success_message, parent=self.root)
+        self.refresh_db_dependent_data()
         self.clear_form()
 
     def search_existing_repairs(self) -> None:
@@ -576,6 +747,7 @@ class RepairsApp:
                 values=(
                     result.repair_id,
                     result.cliente_nombre,
+                    result.equipo_tipo_nombre or "",
                     result.equipo_marca or "",
                     result.equipo_modelo or "",
                     result.equipo_serie or "",
@@ -627,6 +799,7 @@ class RepairsApp:
         self.edit_cliente_nombre_var.set(detail.cliente_nombre)
         self.edit_cliente_celular_var.set(detail.cliente_celular or "")
         self.edit_cliente_correo_var.set(detail.cliente_correo or "")
+        self.edit_equipo_tipo_var.set(detail.equipo_tipo_nombre or "")
         self.edit_equipo_marca_var.set(detail.equipo_marca or "")
         self.edit_equipo_modelo_original_var.set(detail.equipo_modelo_original or "")
         self.edit_equipo_serie_var.set(detail.equipo_serie or "")
@@ -656,6 +829,7 @@ class RepairsApp:
                     cliente_nombre=self.edit_cliente_nombre_var.get(),
                     cliente_celular=self.edit_cliente_celular_var.get(),
                     cliente_correo=self.edit_cliente_correo_var.get(),
+                    equipo_tipo_id=self.selected_equipment_type_id(self.edit_equipo_tipo_var.get()),
                     equipo_marca=self.edit_equipo_marca_var.get(),
                     equipo_modelo_original=self.edit_equipo_modelo_original_var.get(),
                     equipo_serie=self.edit_equipo_serie_var.get(),
@@ -691,9 +865,14 @@ class RepairsApp:
             self.edit_multimedia_list.insert(tk.END, f"[pendiente] {path}")
 
     def clear_form(self) -> None:
+        self.selected_client_var.set("")
         self.cliente_nombre_var.set("")
         self.cliente_celular_var.set("")
         self.cliente_correo_var.set("")
+        if self.equipment_type_map:
+            self.equipo_tipo_var.set(next(iter(self.equipment_type_map)))
+        else:
+            self.equipo_tipo_var.set("")
         self.equipo_marca_var.set("")
         self.equipo_modelo_original_var.set("")
         self.equipo_serie_var.set("")
@@ -714,6 +893,7 @@ class RepairsApp:
         self.edit_cliente_nombre_var.set("")
         self.edit_cliente_celular_var.set("")
         self.edit_cliente_correo_var.set("")
+        self.edit_equipo_tipo_var.set("")
         self.edit_equipo_marca_var.set("")
         self.edit_equipo_modelo_original_var.set("")
         self.edit_equipo_serie_var.set("")

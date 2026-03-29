@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from repair_service import RepairFormData, create_repair_record
+from repair_service import RepairFormData, create_repair_record, list_equipment_types, resolve_equipment_type_id
 from schema import REPAIR_STATUS_LABELS, validate_repair_status
 
 
@@ -16,6 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cliente-nombre", required=True, help="Nombre del cliente.")
     parser.add_argument("--cliente-celular", help="Celular del cliente.")
     parser.add_argument("--cliente-correo", help="Correo del cliente.")
+    parser.add_argument("--tipo-equipo", required=True, help="Nombre del tipo de equipo, por ejemplo Notebook.")
     parser.add_argument("--equipo-marca", help="Marca del equipo.")
     parser.add_argument("--equipo-modelo-original", help="Modelo tal como aparece en origen.")
     parser.add_argument("--equipo-modelo-estandarizado", help="Modelo normalizado para reutilizar busquedas.")
@@ -48,12 +49,22 @@ def main() -> int:
         return 1
 
     try:
+        tipo_equipo_id = resolve_equipment_type_id(args.db, args.tipo_equipo)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        print("Tipos disponibles:", file=sys.stderr)
+        for item in list_equipment_types(args.db):
+            print(f"- {item.nombre}", file=sys.stderr)
+        return 1
+
+    try:
         result = create_repair_record(
             args.db,
             RepairFormData(
                 cliente_nombre=args.cliente_nombre,
                 cliente_celular=args.cliente_celular,
                 cliente_correo=args.cliente_correo,
+                equipo_tipo_id=tipo_equipo_id,
                 equipo_marca=args.equipo_marca,
                 equipo_modelo_original=args.equipo_modelo_original,
                 equipo_modelo_estandarizado=args.equipo_modelo_estandarizado,
