@@ -65,9 +65,7 @@ Archivos principales del proyecto:
 - `src/import_jobs/repair_service.py`: concentra la logica reutilizable para crear o reutilizar cliente y equipo, registrar una reparacion y asociar multimedia.
 - `src/import_jobs/gui_repairs.py`: interfaz grafica local en Tkinter para el uso diario.
 - `src/import_jobs/manage_repairs.py`: carga manual por linea de comandos usando la misma logica de negocio que la GUI.
-- `src/import_jobs/import_zip.py`: herramienta opcional para importar historiales viejos desde un archivo ZIP.
-- `src/import_jobs/extractor.py`: heuristicas simples para inferir algunos datos durante la importacion historica.
-- `tests/test_sqlite_flow.py`: validaciones minimas del flujo principal y de la importacion.
+- `tests/test_sqlite_flow.py`: validaciones minimas del flujo principal.
 
 ## Uso recomendado
 
@@ -75,8 +73,6 @@ El uso diario recomendado es registrar casos nuevos directamente en el sistema:
 
 - con la interfaz grafica Tkinter;
 - o con la linea de comandos si preferis un flujo manual/scriptable.
-
-La importacion desde ZIP no es el flujo principal. Se conserva como herramienta opcional para migrar historiales tecnicos viejos que ya existen en carpetas y archivos.
 
 ## Ejecutar la GUI
 
@@ -239,32 +235,6 @@ python3 src/import_jobs/manage_repairs.py \
 
 Tambien se puede seguir usando `src/import_jobs/reprocess_pdfs.py` como alias del cargador manual, aunque el flujo recomendado hoy es `manage_repairs.py` o la GUI.
 
-## Importacion desde ZIP
-
-La importacion desde ZIP es una funcionalidad secundaria, pensada para migracion de historiales existentes.
-
-Sirve cuando ya tenes trabajos viejos organizados en carpetas con documentos, imagenes, videos y otros archivos, y queres convertir ese material en registros estructurados dentro de SQLite.
-
-No debe interpretarse como el corazon del sistema ni como el flujo normal de alta diaria.
-
-Ejemplo de ejecucion:
-
-```bash
-python3 src/import_jobs/import_zip.py \
-  --zip "/ruta/a/Trabajos.zip" \
-  --db littlenet_database.sqlite3 \
-  --workspace workspace \
-  --logs-dir logs
-```
-
-Durante esta importacion:
-
-- se descomprime el ZIP en `workspace/`;
-- se recorren carpetas y archivos historicos;
-- se crean o reutilizan clientes y equipos cuando es posible;
-- se registran reparaciones;
-- los archivos se guardan solo como rutas asociadas en `multimedia`.
-
 ## Validacion
 
 Hay tests minimos automatizados para validar:
@@ -272,8 +242,7 @@ Hay tests minimos automatizados para validar:
 - creacion del esquema SQLite;
 - foreign keys activas;
 - alta completa `cliente -> equipo -> reparacion -> multimedia`;
-- uso de la logica compartida de alta;
-- importacion basica desde un ZIP.
+- uso de la logica compartida de alta.
 
 Ejecucion:
 

@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
-import subprocess
 import sys
 import tempfile
 import unittest
-import zipfile
-from datetime import date
 from pathlib import Path
 
 
@@ -94,69 +91,6 @@ class SQLiteFlowTests(unittest.TestCase):
                     "INSERT INTO multimedia (id_reparacion, ruta_archivo) VALUES (?, ?)",
                     (9999, "fantasma.jpg"),
                 )
-
-            connection.close()
-
-    def test_import_zip_creates_repair_centered_records(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            temp_root = Path(tmp_dir)
-            source_root = temp_root / "Trabajos"
-            case_dir = source_root / "Cliente Uno" / "Notebook Acer Aspire 5"
-            case_dir.mkdir(parents=True)
-            (case_dir / "diagnostico.txt").write_text(
-                "Falla reportada: No enciende\nDiagnostico tecnico: Falla en fuente\n",
-                encoding="utf-8",
-            )
-            (case_dir / "foto.jpg").write_text("binary", encoding="utf-8")
-
-            zip_path = temp_root / "trabajos.zip"
-            with zipfile.ZipFile(zip_path, "w") as archive:
-                for file_path in source_root.rglob("*"):
-                    archive.write(file_path, file_path.relative_to(source_root.parent))
-
-            db_path = temp_root / "littlenet_database.sqlite3"
-            workspace_dir = temp_root / "workspace"
-            logs_dir = temp_root / "logs"
-
-            subprocess.run(
-                [
-                    sys.executable,
-                    str(PROJECT_ROOT / "src" / "import_jobs" / "import_zip.py"),
-                    "--zip",
-                    str(zip_path),
-                    "--db",
-                    str(db_path),
-                    "--workspace",
-                    str(workspace_dir),
-                    "--logs-dir",
-                    str(logs_dir),
-                ],
-                cwd=PROJECT_ROOT,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-
-            connection = connect_sqlite(db_path)
-            counts = {
-                "clientes": connection.execute("SELECT COUNT(*) FROM clientes").fetchone()[0],
-                "equipos": connection.execute("SELECT COUNT(*) FROM equipos").fetchone()[0],
-                "reparaciones": connection.execute("SELECT COUNT(*) FROM reparaciones").fetchone()[0],
-                "multimedia": connection.execute("SELECT COUNT(*) FROM multimedia").fetchone()[0],
-            }
-            self.assertEqual(counts, {"clientes": 1, "equipos": 1, "reparaciones": 1, "multimedia": 2})
-
-            repair_row = connection.execute(
-                """
-                SELECT r.fecha_ingreso, r.falla_reportada, e.marca, e.modelo_original
-                FROM reparaciones r
-                JOIN equipos e ON e.id = r.id_equipo
-                """
-            ).fetchone()
-            self.assertEqual(repair_row["marca"], "ACER")
-            self.assertIn("Aspire", repair_row["modelo_original"])
-            self.assertEqual(repair_row["fecha_ingreso"], date.today().isoformat())
-            self.assertIn("No enciende", repair_row["falla_reportada"])
 
             connection.close()
 
