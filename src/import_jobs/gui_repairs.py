@@ -21,12 +21,12 @@ from app_runtime import load_last_db_path, save_last_db_path
 from repair_service import (
     ClientListItem,
     EquipmentTypeListItem,
+    DbReferenceData,
     RepairFormData,
     RepairSearchFilters,
     RepairUpdateData,
     create_repair_record,
-    list_equipment_types,
-    list_registered_clients,
+    load_db_reference_data,
     load_repair_detail,
     search_repairs,
     update_repair_record,
@@ -548,42 +548,33 @@ class RepairsApp:
         self.refresh_db_dependent_data()
 
     def refresh_db_dependent_data(self) -> None:
-        self.refresh_registered_clients()
-        self.refresh_equipment_types()
-
-    def refresh_registered_clients(self) -> None:
         try:
-            clients = list_registered_clients(
+            reference_data = load_db_reference_data(
                 self.db_path_var.get().strip() or "littlenet_database.sqlite3"
             )
         except Exception as exc:  # noqa: BLE001
             self.registered_client_map = {}
             self.client_selector.configure(values=[])
             self.selected_client_var.set("")
-            self.message_var.set(f"No se pudieron cargar clientes guardados: {exc}")
-            return
-
-        self.registered_client_map = {
-            self.format_registered_client_label(client): client for client in clients
-        }
-        self.client_selector.configure(values=list(self.registered_client_map))
-        if self.selected_client_var.get() not in self.registered_client_map:
-            self.selected_client_var.set("")
-
-    def refresh_equipment_types(self) -> None:
-        try:
-            types = list_equipment_types(
-                self.db_path_var.get().strip() or "littlenet_database.sqlite3"
-            )
-        except Exception as exc:  # noqa: BLE001
             self.equipment_type_map = {}
             self.equipment_type_selector.configure(values=[])
             self.edit_equipment_type_selector.configure(values=[])
             self.equipo_tipo_var.set("")
             self.edit_equipo_tipo_var.set("")
-            self.message_var.set(f"No se pudieron cargar tipos de equipo: {exc}")
+            self.message_var.set(f"No se pudieron cargar los datos de la base: {exc}")
             return
 
+        self._apply_reference_data(reference_data)
+
+    def _apply_reference_data(self, reference_data: DbReferenceData) -> None:
+        self.registered_client_map = {
+            self.format_registered_client_label(client): client for client in reference_data.clients
+        }
+        self.client_selector.configure(values=list(self.registered_client_map))
+        if self.selected_client_var.get() not in self.registered_client_map:
+            self.selected_client_var.set("")
+
+        types = reference_data.equipment_types
         self.equipment_type_map = {item.nombre: item for item in types}
         type_names = list(self.equipment_type_map)
         self.equipment_type_selector.configure(values=type_names)

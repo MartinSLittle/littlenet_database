@@ -92,6 +92,12 @@ class EquipmentTypeListItem:
 
 
 @dataclass
+class DbReferenceData:
+    clients: list[ClientListItem]
+    equipment_types: list[EquipmentTypeListItem]
+
+
+@dataclass
 class MultimediaItem:
     multimedia_id: int
     ruta_archivo: str
@@ -384,6 +390,27 @@ def list_equipment_types(db_path: str | Path) -> list[EquipmentTypeListItem]:
             EquipmentTypeListItem(type_id=int(row["id"]), nombre=row["nombre"])
             for row in list_tipos_equipo(connection)
         ]
+    finally:
+        connection.close()
+
+
+def load_db_reference_data(db_path: str | Path) -> DbReferenceData:
+    connection = connect_sqlite(db_path)
+    try:
+        clients = [
+            ClientListItem(
+                client_id=int(row["id"]),
+                nombre=row["nombre"],
+                celular=row["celular"],
+                correo=row["correo"],
+            )
+            for row in list_clientes(connection)
+        ]
+        equipment_types = [
+            EquipmentTypeListItem(type_id=int(row["id"]), nombre=row["nombre"])
+            for row in list_tipos_equipo(connection)
+        ]
+        return DbReferenceData(clients=clients, equipment_types=equipment_types)
     finally:
         connection.close()
 

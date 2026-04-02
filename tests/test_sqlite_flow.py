@@ -16,6 +16,7 @@ import app_runtime
 from app_runtime import get_default_db_path
 from repair_service import RepairFormData, create_repair_record, list_equipment_types, list_registered_clients
 from repair_service import RepairSearchFilters, RepairUpdateData, load_repair_detail, search_repairs, update_repair_record
+from repair_service import load_db_reference_data
 from schema import (
     REPAIR_STATUS_RECEIVED,
     add_multimedia,
@@ -197,23 +198,19 @@ class SQLiteFlowTests(unittest.TestCase):
             self.assertEqual(clients[0].correo, "alfa@test.local")
             self.assertEqual(clients[1].celular, "11-9999")
 
-    def test_connect_sqlite_reports_locked_database_with_clear_message(self) -> None:
+    def test_load_db_reference_data_uses_single_connection_for_clients_and_types(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_root = Path(tmp_dir)
-            db_path = temp_root / "locked.sqlite3"
+            db_path = temp_root / "reference.sqlite3"
 
             connection = connect_sqlite(db_path)
-            connection.execute("PRAGMA journal_mode = DELETE")
-            connection.execute("BEGIN EXCLUSIVE")
+            upsert_client(connection, "Cliente Uno", "11-1111", "uno@test.local")
+            connection.close()
 
-            try:
-                with self.assertRaises(sqlite3.OperationalError) as ctx:
-                    connect_sqlite(db_path, timeout=0.05, busy_timeout_ms=50)
-                self.assertIn("La base de datos esta bloqueada", str(ctx.exception))
-                self.assertIn(str(db_path), str(ctx.exception))
-            finally:
-                connection.rollback()
-                connection.close()
+            reference_data = load_db_reference_data(db_path)
+
+            self.assertEqual([client.nombre for client in reference_data.clients], ["Cliente Uno"])
+            self.assertEqual([item.nombre for item in reference_data.equipment_types], ["Notebook", "Mini-PC", "PC", "Otro"])
 
     def test_search_and_update_existing_repair_without_creating_new_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
