@@ -197,6 +197,24 @@ class SQLiteFlowTests(unittest.TestCase):
             self.assertEqual(clients[0].correo, "alfa@test.local")
             self.assertEqual(clients[1].celular, "11-9999")
 
+    def test_connect_sqlite_reports_locked_database_with_clear_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_root = Path(tmp_dir)
+            db_path = temp_root / "locked.sqlite3"
+
+            connection = connect_sqlite(db_path)
+            connection.execute("PRAGMA journal_mode = DELETE")
+            connection.execute("BEGIN EXCLUSIVE")
+
+            try:
+                with self.assertRaises(sqlite3.OperationalError) as ctx:
+                    connect_sqlite(db_path, timeout=0.05, busy_timeout_ms=50)
+                self.assertIn("La base de datos esta bloqueada", str(ctx.exception))
+                self.assertIn(str(db_path), str(ctx.exception))
+            finally:
+                connection.rollback()
+                connection.close()
+
     def test_search_and_update_existing_repair_without_creating_new_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_root = Path(tmp_dir)

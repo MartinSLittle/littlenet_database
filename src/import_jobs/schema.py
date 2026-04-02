@@ -26,6 +26,8 @@ DEFAULT_EQUIPMENT_TYPES = (
     "Otro",
 )
 
+SQLITE_BUSY_TIMEOUT_MS = 10_000
+
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -231,13 +233,36 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
     connection.commit()
 
 
-def connect_sqlite(db_path: str | Path) -> sqlite3.Connection:
+def configure_sqlite_connection(
+    connection: sqlite3.Connection,
+    *,
+    busy_timeout_ms: int = SQLITE_BUSY_TIMEOUT_MS,
+) -> None:
+    connection.row_factory = sqlite3.Row
+    connection.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA foreign_keys = ON")
+
+
+def connect_sqlite(
+    db_path: str | Path,
+    *,
+    timeout: float = SQLITE_BUSY_TIMEOUT_MS / 1000,
+    busy_timeout_ms: int = SQLITE_BUSY_TIMEOUT_MS,
+) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
-    connection.row_factory = sqlite3.Row
-    ensure_schema(connection)
-    return connection
+    try:
+        connection = sqlite3.connect(path, timeout=timeout)
+        configure_sqlite_connection(connection, busy_timeout_ms=busy_timeout_ms)
+        ensure_schema(connection)
+        return connection
+    except sqlite3.OperationalError as exc:
+        if "locked" in str(exc).lower():
+            raise sqlite3.OperationalError(
+                f"La base de datos esta bloqueada: {path}. Cierra cualquier otra instancia o espera a que termine la operacion en curso."
+            ) from exc
+        raise
 
 
 def validate_repair_status(status: int) -> None:

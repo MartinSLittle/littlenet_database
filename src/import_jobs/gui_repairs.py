@@ -44,6 +44,7 @@ class RepairsApp:
         initial_db_path, startup_warning = load_last_db_path()
         self.db_path_var = tk.StringVar(value=str(initial_db_path))
         self._db_path_trace_id: str | None = None
+        self._pending_db_refresh_id: str | None = None
         self.startup_warning_message = startup_warning
 
         self.selected_client_var = tk.StringVar()
@@ -524,7 +525,9 @@ class RepairsApp:
         )
         if selected:
             self.db_path_var.set(selected)
-            self.refresh_db_dependent_data()
+            self.message_var.set("Cargando datos de la base seleccionada...")
+            self.root.update_idletasks()
+            self.schedule_db_refresh()
 
     def _on_db_path_changed(self, *_args: object) -> None:
         raw_path = self.db_path_var.get().strip()
@@ -534,6 +537,15 @@ class RepairsApp:
             save_last_db_path(raw_path)
         except OSError:
             return
+
+    def schedule_db_refresh(self) -> None:
+        if self._pending_db_refresh_id is not None:
+            self.root.after_cancel(self._pending_db_refresh_id)
+        self._pending_db_refresh_id = self.root.after_idle(self._run_scheduled_db_refresh)
+
+    def _run_scheduled_db_refresh(self) -> None:
+        self._pending_db_refresh_id = None
+        self.refresh_db_dependent_data()
 
     def refresh_db_dependent_data(self) -> None:
         self.refresh_registered_clients()
