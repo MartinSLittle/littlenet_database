@@ -479,41 +479,77 @@ class RepairsApp:
         if self._scroll_events_bound:
             return
         widget.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
+        widget.bind_all("<Shift-MouseWheel>", self._on_mousewheel, add="+")
         widget.bind_all("<Button-4>", self._on_mousewheel, add="+")
         widget.bind_all("<Button-5>", self._on_mousewheel, add="+")
         self._scroll_events_bound = True
 
     def _on_mousewheel(self, event: tk.Event[tk.Misc]) -> str | None:
-        target = self._get_scroll_target(event)
-        if target is None:
+        step = self._get_mousewheel_step(event)
+        if step == 0:
             return None
 
+        for target in self._iter_scroll_targets(event):
+            if not self._can_scroll_widget(target, step):
+                continue
+            target.yview_scroll(step, "units")
+            return "break"
+
+        return None
+
+    def _get_mousewheel_step(self, event: tk.Event[tk.Misc]) -> int:
         delta = getattr(event, "delta", 0)
         if delta:
-            step = -1 if delta > 0 else 1
-        elif getattr(event, "num", None) == 4:
-            step = -1
-        elif getattr(event, "num", None) == 5:
-            step = 1
-        else:
-            return None
+            if sys.platform.startswith("win"):
+                return int(-(delta / 120)) or (-1 if delta > 0 else 1)
+            return -1 if delta > 0 else 1
+        if getattr(event, "num", None) == 4:
+            return -1
+        if getattr(event, "num", None) == 5:
+            return 1
+        return 0
 
-        target.yview_scroll(step, "units")
-        return "break"
-
-    def _get_scroll_target(self, event: tk.Event[tk.Misc]) -> tk.Misc | None:
+    def _iter_scroll_targets(self, event: tk.Event[tk.Misc]) -> list[tk.Misc]:
         pointer_widget = self.root.winfo_containing(event.x_root, event.y_root)
         widget = pointer_widget or event.widget
+        targets: list[tk.Misc] = []
+        seen: set[str] = set()
 
         while widget is not None:
-            if getattr(widget, "yview", None) is not None:
-                return widget
+            if self._supports_vertical_scroll(widget):
+                widget_path = str(widget)
+                if widget_path not in seen:
+                    targets.append(widget)
+                    seen.add(widget_path)
             parent_name = widget.winfo_parent()
             if not parent_name:
                 break
             widget = widget.nametowidget(parent_name)
 
-        return self.main_canvas
+        main_canvas_path = str(self.main_canvas)
+        if main_canvas_path not in seen:
+            targets.append(self.main_canvas)
+        return targets
+
+    def _supports_vertical_scroll(self, widget: tk.Misc) -> bool:
+        return callable(getattr(widget, "yview", None))
+
+    def _can_scroll_widget(self, widget: tk.Misc, step: int) -> bool:
+        if not self._supports_vertical_scroll(widget):
+            return False
+
+        try:
+            first, last = widget.yview()
+        except tk.TclError:
+            return False
+
+        if first <= 0.0 and last >= 1.0:
+            return False
+        if step < 0:
+            return first > 0.0
+        if step > 0:
+            return last < 1.0
+        return False
 
     def pick_db_path(self) -> None:
         selected = filedialog.asksaveasfilename(
